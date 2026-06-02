@@ -58,19 +58,18 @@ ping6 -c 3 -W 2 2001:db8:12::2
 run "FASE 3 | traceroute6 a dominio.com (OSPFv3 en accion)" "
 echo 'dominio.com resuelve a 2001:db8:12::1 (R1-Linux, punto publico)'
 echo ''
-echo 'Ruta esperada:'
+echo 'Ruta esperada (modo ICMP -I, ICMPv6 permitido por ACL):'
 echo '  Salto 1: 2001:db8:3::1   (R3 fa0/0 — gateway PC3)'
 echo '  Salto 2: 2001:db8:23::1  (R2 Serial0/0 — enlace serial R2-R3)'
-echo '  Salto 3: * — R1-Linux BLOQUEA el traceroute (ACL DROP)'
+echo '  Salto 3: 2001:db8:12::1  (R1-Linux — destino final)'
 echo ''
-echo 'NOTA: El salto 3 muestra * porque la ACL de R1-Linux descarta'
-echo 'los paquetes UDP de traceroute (no son :80 :53 :51820).'
-echo 'El trafico HTTP y DNS SI llega — el * no significa que no funcione.'
+echo 'NOTA: Se usa traceroute6 -I (ICMP) porque la ACL de R1-Linux'
+echo 'tiene la regla: -p ipv6-icmp -j ACCEPT'
+echo 'Con UDP el salto 3 mostraria * (el DROP final lo bloquea).'
 echo ''
-traceroute6 -n -q 2 -w 2 -m 6 2001:db8:12::1
+traceroute6 -I -n -q 2 -w 2 -m 6 2001:db8:12::1
 echo ''
-echo 'Verificacion: aunque traceroute muestre * en salto 3,'
-echo 'el HTTP si llega (probado en FASE 4).'
+echo 'Los 3 saltos confirman OSPFv3 end-to-end: PC3 -> R3 -> R2 -> R1-Linux.'
 "
 
 # ----------------------------------------------------------
@@ -93,15 +92,21 @@ curl -6 --max-time 3 -s http://[2001:db8:12::1]:8080/ \
 run "FASE 5 | DNS via NAT66 DNAT :53 hacia PC1" "
 echo 'Consulta DNS a traves de R1-Linux (DNAT :53 -> fd00:1::10:53)'
 echo ''
-echo 'dominio.com (zona publica — debe resolver a R1-Linux):'
+echo 'dominio.com (zona publica — debe resolver a R1-Linux 2001:db8:12::1):'
+echo '  [dig]'
 dig AAAA dominio.com @2001:db8:12::1 +short +time=3 2>/dev/null \
-    || echo 'DNAT DNS no respondio — bind9 puede estar solo en ULA'
+    || echo 'DNAT DNS no respondio'
+echo '  [nslookup]'
+nslookup -type=AAAA dominio.com 2001:db8:12::1 2>/dev/null | grep -E 'Address|address' | grep -v '#'
 echo ''
-echo 'Consulta DNS directa a PC1 via VPN (fd00:1::10):'
+echo 'dominio.com via VPN (dig directo a PC1 fd00:1::10):'
 dig AAAA dominio.com @fd00:1::10 +short +time=3 2>/dev/null
 echo ''
-echo 'dominio.local (zona privada — solo via VPN):'
+echo 'dominio.local (zona privada — solo resolvible via VPN):'
+echo '  [dig]'
 dig AAAA dominio.local @fd00:1::10 +short +time=3 2>/dev/null
+echo '  [nslookup]'
+nslookup -type=AAAA dominio.local fd00:1::10 2>/dev/null | grep -E 'Address|address' | grep -v '#'
 "
 
 # ----------------------------------------------------------
@@ -195,15 +200,15 @@ traceroute6 -n -q 1 -w 2 -m 5 fd00:1::10
 echo ''
 
 echo '--- CONTRASTE: traceroute por red PUBLICA (sin pasar por VPN) ---'
-echo 'La ruta publica SI muestra saltos porque los routers Cisco'
-echo 'responden ICMP TTL-exceeded normalmente:'
-traceroute6 -n -q 1 -w 2 -m 4 2001:db8:12::1
+echo 'La ruta publica SI muestra los 3 saltos (ICMP -I, routers Cisco'
+echo 'responden TTL-exceeded y R1-Linux acepta ICMPv6 por ACL):'
+traceroute6 -I -n -q 1 -w 2 -m 4 2001:db8:12::1
 echo ''
 
 echo '--- Resumen de diferencias ---'
-echo 'PUBLICA (sin VPN): PC3 → R3 (salto1) → R2 (salto2) → R1-Linux (*)'
-echo 'VPN (fd00::):      PC3 → wg0 → PC1 — sin saltos visibles (tunel cifrado)'
-echo 'El ping a fd00:1::10 con 0% perdida confirma que el tunel funciona.'
+echo 'PUBLICA (ICMP):  PC3 → R3 (salto1) → R2 (salto2) → R1-Linux (salto3 visible)'
+echo 'VPN (fd00::):    PC3 → wg0 → PC1 — sin saltos visibles (tunel cifrado)'
+echo 'El contraste demuestra que WireGuard cifra/oculta la ruta intencionalmente.'
 "
 
 # ----------------------------------------------------------
