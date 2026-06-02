@@ -61,9 +61,16 @@ echo ''
 echo 'Ruta esperada:'
 echo '  Salto 1: 2001:db8:3::1   (R3 fa0/0 — gateway PC3)'
 echo '  Salto 2: 2001:db8:23::1  (R2 Serial0/0 — enlace serial R2-R3)'
-echo '  Salto 3: 2001:db8:12::1  (R1-Linux eth0 — NAT66 entrada)'
+echo '  Salto 3: * — R1-Linux BLOQUEA el traceroute (ACL DROP)'
+echo ''
+echo 'NOTA: El salto 3 muestra * porque la ACL de R1-Linux descarta'
+echo 'los paquetes UDP de traceroute (no son :80 :53 :51820).'
+echo 'El trafico HTTP y DNS SI llega — el * no significa que no funcione.'
 echo ''
 traceroute6 -n -q 2 -w 2 -m 6 2001:db8:12::1
+echo ''
+echo 'Verificacion: aunque traceroute muestre * en salto 3,'
+echo 'el HTTP si llega (probado en FASE 4).'
 "
 
 # ----------------------------------------------------------
@@ -95,6 +102,50 @@ dig AAAA dominio.com @fd00:1::10 +short +time=3 2>/dev/null
 echo ''
 echo 'dominio.local (zona privada — solo via VPN):'
 dig AAAA dominio.local @fd00:1::10 +short +time=3 2>/dev/null
+"
+
+# ----------------------------------------------------------
+# FASE 5.5 — Pruebas COMPLETAS sin VPN
+# Demuestra que sin VPN:
+#   - HTTP publico funciona via NAT66 DNAT
+#   - DNS via DNAT funciona
+#   - Recursos privados (fd00::) son inaccesibles
+# ----------------------------------------------------------
+run "FASE 5.5 | Todo sin VPN — red privada debe ser inaccesible" "
+echo 'Bajando VPN para pruebas sin tunel...'
+wg-quick down wg0 2>/dev/null
+sleep 1
+echo ''
+
+echo '--- [5.5.1] Rutas activas SIN VPN (no debe haber fd00:: en tabla) ---'
+ip -6 route show | grep fd00 && echo 'ATENCION: rutas fd00:: presentes sin VPN' || echo 'OK: no hay rutas fd00:: sin VPN'
+echo ''
+
+echo '--- [5.5.2] HTTP publico SIN VPN (debe funcionar via NAT66) ---'
+curl -6 --max-time 5 -s http://[2001:db8:12::1]/ | grep -E '<h1>|NAT66'
+echo ''
+
+echo '--- [5.5.3] DNS via DNAT SIN VPN (dig @R1-Linux publico) ---'
+dig AAAA dominio.com @2001:db8:12::1 +short +time=3 2>/dev/null && echo 'DNS DNAT OK' || echo 'DNS DNAT no respondio'
+echo ''
+
+echo '--- [5.5.4] Red privada inaccesible SIN VPN ---'
+echo 'ping6 fd00:1::10 (PC1 ULA):'
+ping6 -c 2 -W 2 fd00:1::10 2>&1 | tail -2
+echo 'ping6 fd00:2::1 (extremo VPN):'
+ping6 -c 2 -W 2 fd00:2::1 2>&1 | tail -2
+echo ''
+
+echo '--- [5.5.5] HTTP intranet inaccesible SIN VPN ---'
+curl -6 --max-time 3 -s -H 'Host: intranet.dominio.local' http://[fd00:1::10]/ \
+    && echo 'FAIL: intranet no deberia ser accesible sin VPN' \
+    || echo 'OK: intranet inaccesible sin VPN (Network unreachable)'
+echo ''
+
+echo 'Subiendo VPN de nuevo para fases siguientes...'
+wg-quick up wg0 2>/dev/null
+sleep 2
+wg show | grep -E 'endpoint|handshake'
 "
 
 # ----------------------------------------------------------

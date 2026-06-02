@@ -106,9 +106,16 @@ log "wg0.conf OK"
 # 5. Servicios
 # -------------------------------------------------------
 log "[5/5] Iniciando servicios..."
-named-checkconf && service bind9 start && log "BIND9 OK"
 nginx -t && nginx && log "Nginx OK"
+
+# WireGuard primero — crea la interfaz wg0 (fd00:2::1)
 wg-quick up wg0 && log "WireGuard OK"
+
+# BIND9 despues de WireGuard para que escuche en TODAS las interfaces:
+#   fd00:1::10 (eth0 LAN), fd00:2::1 (wg0 VPN), ::1 (loopback)
+# Si se inicia antes, solo escucha en ::1 porque wg0 no existe aun.
+named-checkconf && named -u bind && log "BIND9 OK" || \
+    { kill "$(pgrep named)" 2>/dev/null; sleep 1; named -u bind && log "BIND9 reiniciado OK"; }
 
 echo ""
 echo "=============================================="

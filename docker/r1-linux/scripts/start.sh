@@ -113,10 +113,17 @@ ip6tables -A INPUT -i eth1 -j ACCEPT
 ip6tables -A INPUT -i lo   -j ACCEPT
 ip6tables -A INPUT -i eth0 -j DROP
 
-# Reenvio: eth0→eth1 permite nuevas conexiones (DNAT las redirige a PC1)
-ip6tables -A FORWARD -i eth0 -o eth1 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
-# Reenvio: eth1→eth0 solo trafico de respuesta
-ip6tables -A FORWARD -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED     -j ACCEPT
+# Reenvio eth0->eth1: SOLO conexiones que pasaron por DNAT
+# Esto impide que PC3 acceda directamente a fd00:1::10 via OSPFv3
+# sin pasar por el DNAT (sin usar :80 :53 :51820)
+ip6tables -A FORWARD -i eth0 -o eth1 -m conntrack --ctstate DNAT -j ACCEPT
+ip6tables -A FORWARD -i eth0 -o eth1 -m state --state ESTABLISHED,RELATED -j ACCEPT
+# DROP explicito: la cadena FORWARD tiene politica ACCEPT por defecto.
+# Sin este DROP, cualquier paquete eth0->eth1 que no coincida con las
+# reglas anteriores pasaria igual (seguridad gap).
+ip6tables -A FORWARD -i eth0 -o eth1 -j DROP
+# Reenvio: eth1->eth0 solo trafico de respuesta
+ip6tables -A FORWARD -i eth1 -o eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 log "ip6tables OK"
 echo "--- nat PREROUTING ---"
