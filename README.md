@@ -4,6 +4,118 @@
 
 ---
 
+## Diagramas
+
+> Archivo PlantUML completo: [`diagrama-red.puml`](diagrama-red.puml)
+> (abrir con extension PlantUML en VSCode o en [plantuml.com](https://plantuml.com/plantuml))
+
+### Topologia de Red
+
+```mermaid
+flowchart TB
+    PC3["🖥 PC3 — Cliente Externo\n2001:db8:3::10/64\nwg0: fd00:2::2"]
+    SW2["Switch2\nL2 puro"]
+    R3["R3 Cisco 3745\nfa0/0: 2001:db8:3::1\ns0/0: 2001:db8:23::2"]
+    R2["R2 Cisco 3745\ns0/0: 2001:db8:23::1\nfa0/0: 2001:db8:12::2"]
+    R1["⚙ r1-linux Docker\neth0 PUBLIC: 2001:db8:12::1\neth1 PRIVATE: fd00:1::1\nNAT66 · ACL · OSPFv3"]
+    SW1["Switch1\nL2 puro"]
+    PC1["🖥 PC1 — Servidor\nfd00:1::10/64\nnginx · BIND9 · WireGuard\nwg0: fd00:2::1"]
+    PC2["PC2 VPCS\nfd00:1::20/64"]
+
+    PC3 -- "eth0 → e1" --> SW2
+    SW2 -- "e0 → fa0/0" --> R3
+    R3 -- "s0/0 → s0/0\nSerial DCE/DTE" --> R2
+    R2 -- "fa0/0 → eth0\nEthernet" --> R1
+    R1 -- "eth1 → e0" --> SW1
+    SW1 -- "e2 → eth0" --> PC1
+    SW1 -- "e1 → eth0" --> PC2
+
+    style R1 fill:#FFCC80,stroke:#F57C00,color:#000
+    style PC1 fill:#F8BBD0,stroke:#C2185B,color:#000
+    style PC3 fill:#FFF9C4,stroke:#F9A825,color:#000
+    style R2 fill:#C8E6C9,stroke:#388E3C,color:#000
+    style R3 fill:#C8E6C9,stroke:#388E3C,color:#000
+    style PC2 fill:#FFF9C4,stroke:#F9A825,color:#000
+```
+
+### Flujo HTTP — dominio.com sin VPN
+
+```mermaid
+sequenceDiagram
+    participant PC3 as PC3<br/>2001:db8:3::10
+    participant R3 as R3
+    participant R2 as R2
+    participant R1 as r1-linux<br/>NAT66+ACL
+    participant PC1 as PC1 nginx<br/>fd00:1::10
+
+    PC3->>R3: TCP SYN → 2001:db8:12::1:80
+    R3->>R2: forward (OSPFv3)
+    R2->>R1: TCP SYN → 2001:db8:12::1:80
+    Note over R1: ACL INPUT: permite TCP:80 ✓
+    Note over R1: DNAT: dst → fd00:1::10:80
+    Note over R1: MASQUERADE: src → fd00:1::1
+    R1->>PC1: TCP SYN → fd00:1::10:80
+    PC1-->>R1: HTTP 200 OK
+    Note over R1: conntrack reverse DNAT automático
+    Note over R1: src → 2001:db8:12::1:80
+    R1-->>R2: HTTP 200 OK
+    R2-->>R3: forward
+    R3-->>PC3: HTTP 200 — "dominio.com"
+    Note over PC3: PC3 solo ve 2001:db8:12::1<br/>nunca ve fd00:1::10
+```
+
+### Flujo ACL — Decisiones ip6tables en eth0
+
+```mermaid
+flowchart TD
+    A([Paquete entra por eth0\ninternet público]) --> B{Proto OSPF\n89?}
+    B -->|SI| C([✅ ACCEPT\nadjacencia OSPFv3 R2])
+    B -->|NO| D{ESTABLISHED\no RELATED?}
+    D -->|SI| E([✅ ACCEPT\nrespuesta sesión stateful])
+    D -->|NO| F{ICMPv6?}
+    F -->|SI| G([✅ ACCEPT\nNDP + echo-reply])
+    F -->|NO| H([❌ DROP\npuerto no autorizado])
+
+    A2([Paquete TCP:80/53\nUDP:53/51820]) --> DNAT
+    DNAT["PREROUTING\nDNAT → PC1\nantes que INPUT"] --> FWD
+    FWD([✅ FORWARD\nno pasa por DROP])
+
+    style C fill:#C8E6C9,stroke:#388E3C
+    style E fill:#C8E6C9,stroke:#388E3C
+    style G fill:#C8E6C9,stroke:#388E3C
+    style H fill:#FFCDD2,stroke:#C62828
+    style FWD fill:#C8E6C9,stroke:#388E3C
+    style DNAT fill:#FFF9C4,stroke:#F9A825
+```
+
+### Flujo VPN WireGuard — PC3 → R1-Linux → PC1
+
+```mermaid
+sequenceDiagram
+    participant PC3 as PC3<br/>wg0: fd00:2::2
+    participant R3 as R3
+    participant R2 as R2
+    participant R1 as r1-linux<br/>DNAT :51820
+    participant PC1 as PC1 WireGuard<br/>wg0: fd00:2::1
+
+    Note over PC3,PC1: Establecimiento del túnel
+    PC3->>R3: UDP → 2001:db8:12::1:51820
+    R3->>R2: forward (OSPFv3)
+    R2->>R1: UDP → 2001:db8:12::1:51820
+    Note over R1: ACL INPUT: permite UDP:51820 ✓
+    Note over R1: DNAT: dst → fd00:1::10:51820
+    R1->>PC1: UDP → fd00:1::10:51820
+    PC1-->>R1: WireGuard Handshake Response
+    R1-->>PC3: Handshake desde 2001:db8:12::1
+    Note over PC3: Túnel activo ✓<br/>IP: fd00:2::2/64<br/>AllowedIPs: fd00:1::/64, fd00:2::/64
+
+    Note over PC3,PC1: Acceso a recursos privados (sobre túnel cifrado)
+    PC3->>PC1: HTTP → fd00:1::10:80<br/>(cifrado por WireGuard)
+    PC1-->>PC3: "Intranet — dominio.local"
+```
+
+---
+
 ## Glosario de Tecnologias
 
 ### IPv6 — Estructura de una direccion

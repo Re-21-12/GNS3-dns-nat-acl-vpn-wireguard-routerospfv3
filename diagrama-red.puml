@@ -1,0 +1,227 @@
+@startuml topologia
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultTextAlignment center
+skinparam NodeFontSize 11
+skinparam linetype ortho
+
+title Lab IPv6 — Topologia de Red
+
+package "RED PUBLICA (GUA 2001:db8::/32)" #E3F2FD {
+
+  node "PC3\nCliente Externo\n2001:db8:3::10/64" as PC3 #FFF9C4
+
+  node "Switch2\n(L2 puro)" as SW2 #E0E0E0
+
+  node "R3 Cisco 3745\nrouter-id 3.3.3.3" as R3 #C8E6C9 {
+    portin "fa0/0\n2001:db8:3::1" as R3FA
+    portout "s0/0\n2001:db8:23::2" as R3S0
+  }
+
+  node "R2 Cisco 3745\nrouter-id 2.2.2.2" as R2 #C8E6C9 {
+    portin "s0/0 DCE\n2001:db8:23::1" as R2S0
+    portout "fa0/0\n2001:db8:12::2" as R2FA
+  }
+}
+
+package "FRONTERA / GATEWAY" #FFF3E0 {
+  node "r1-linux Docker\nrouter-id 1.1.1.1\nOSPFv3 + NAT66 + ACL" as R1 #FFCC80 {
+    portin "eth0 PUBLICA\n2001:db8:12::1" as R1E0
+    portout "eth1 PRIVADA\nfd00:1::1" as R1E1
+  }
+}
+
+package "RED INTERNA (ULA fd00:1::/64)" #F3E5F5 {
+  node "Switch1\n(L2 puro)" as SW1 #E0E0E0
+
+  node "PC1 Servidor\nfd00:1::10/64\nnginx | BIND9 | WireGuard" as PC1 #F8BBD0
+
+  node "PC2 VPCS\nfd00:1::20/64" as PC2 #FFF9C4
+}
+
+package "RED VPN (ULA fd00:2::/64)" #E8F5E9 {
+  note "WireGuard Tunnel\nPC3 wg0: fd00:2::2\nPC1 wg0: fd00:2::1" as VPN
+}
+
+PC3 --> SW2 : eth0-e1
+SW2 --> R3FA : e0-fa0/0
+R3S0 --> R2S0 : Serial s0/0-s0/0\n(DCE clock 64000)
+R2FA --> R1E0 : Ethernet fa0/0-eth0
+R1E1 --> SW1 : eth1-e0
+SW1 --> PC1 : e2-eth0
+SW1 --> PC2 : e1-eth0
+
+@enduml
+
+' ============================================================
+
+@startuml flujo-http
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam SequenceMessageAlign center
+skinparam ParticipantFontSize 11
+
+title Flujo HTTP — dominio.com (sin VPN)
+
+participant "PC3\n2001:db8:3::10" as PC3 #FFF9C4
+participant "R3" as R3 #C8E6C9
+participant "R2" as R2 #C8E6C9
+participant "R1-Linux\nNAT66 + ACL" as R1 #FFCC80
+participant "PC1 nginx\nfd00:1::10" as PC1 #F8BBD0
+
+PC3 -> R3 : TCP SYN\ndst=2001:db8:12::1:80
+
+note over R3,R2 #E3F2FD
+  OSPFv3: ruta 2001:db8:12::/64
+  via R2 → r1-linux
+end note
+
+R3 -> R2 : forward
+R2 -> R1 : TCP SYN\ndst=2001:db8:12::1:80
+
+group ip6tables PREROUTING (tabla nat)
+  note over R1 #FFF3E0
+    DNAT: dst 2001:db8:12::1:80
+          → fd00:1::10:80
+  end note
+end
+
+group ip6tables FORWARD
+  note over R1 #FFF3E0
+    ACCEPT: NEW ESTABLISHED
+    MASQUERADE: src → fd00:1::1
+  end note
+end
+
+R1 -> PC1 : TCP SYN\ndst=fd00:1::10:80\nsrc=fd00:1::1
+
+PC1 --> R1 : HTTP 200 OK\nsrc=fd00:1::10:80
+
+group conntrack — reverse NAT
+  note over R1 #FFF3E0
+    src 2001:db8:12::1:80
+    (reverso automatico del DNAT)
+  end note
+end
+
+R1 --> R2 : HTTP 200 OK\nsrc=2001:db8:12::1:80
+R2 --> R3 : forward
+R3 --> PC3 : HTTP 200 OK\n"dominio.com"
+
+note over PC3 #E8F5E9
+  PC3 nunca supo que PC1 existe.
+  Solo ve la IP de R1-Linux.
+end note
+
+@enduml
+
+' ============================================================
+
+@startuml flujo-acl
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam ActivityFontSize 11
+skinparam DiamondFontSize 10
+
+title Flujo ACL — ip6tables INPUT en eth0 (interfaz publica)
+
+start
+
+:Paquete entrante\npor eth0 (internet);
+
+if (Protocolo OSPF\n(proto 89)?) then (SI)
+  #C8E6C9:ACCEPT
+  Necesario para
+  adjacencia OSPFv3
+  con R2;
+  stop
+else (NO)
+  if (Estado ESTABLISHED\no RELATED?) then (SI)
+    #C8E6C9:ACCEPT
+    Respuesta a sesion
+    ya establecida
+    (stateful);
+    stop
+  else (NO)
+    if (ICMPv6?) then (SI)
+      #C8E6C9:ACCEPT
+      NDP obligatorio
+      ping echo-reply;
+      stop
+    else (NO)
+      if (Interfaz eth1\no loopback?) then (SI)
+        #C8E6C9:ACCEPT
+        LAN interna
+        confianza total;
+        stop
+      else (NO)
+        #FFCDD2:DROP
+        Puerto no autorizado
+        (SSH Telnet etc);
+        stop
+      endif
+    endif
+  endif
+endif
+
+note right
+  Los paquetes DNAT (:80 :53 :51820)
+  NO llegan a INPUT.
+  Pasan por PREROUTING antes
+  y van directo a FORWARD.
+end note
+
+@enduml
+
+' ============================================================
+
+@startuml flujo-vpn
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam SequenceMessageAlign center
+skinparam ParticipantFontSize 11
+
+title Flujo VPN WireGuard — PC3 → R1-Linux → PC1
+
+participant "PC3\n2001:db8:3::10\nwg0: fd00:2::2" as PC3 #FFF9C4
+participant "R3" as R3 #C8E6C9
+participant "R2" as R2 #C8E6C9
+participant "R1-Linux\n2001:db8:12::1\nNAT66 DNAT :51820" as R1 #FFCC80
+participant "PC1 WireGuard\nfd00:1::10\nwg0: fd00:2::1" as PC1 #F8BBD0
+
+== Establecimiento del tunel ==
+
+PC3 -> R3 : UDP dst=2001:db8:12::1:51820\n(WireGuard Handshake Init)
+R3 -> R2 : forward (OSPFv3)
+R2 -> R1 : UDP dst=2001:db8:12::1:51820
+
+group ip6tables
+  note over R1 #FFF3E0
+    INPUT ACCEPT: UDP:51820
+    DNAT: dst → fd00:1::10:51820
+    MASQUERADE: src → fd00:1::1
+  end note
+end
+
+R1 -> PC1 : UDP dst=fd00:1::10:51820\nHandshake Init
+PC1 --> R1 : Handshake Response
+R1 --> PC3 : Handshake Response\nsrc=2001:db8:12::1
+
+note over PC3 #E8F5E9
+  Tunel establecido
+  PC3 obtiene fd00:2::2/64
+  AllowedIPs: fd00:1::/64, fd00:2::/64
+end note
+
+== Trafico sobre el tunel ==
+
+PC3 -> R1 : UDP cifrado WireGuard\n(trafico a fd00:1::10)
+R1 -> PC1 : trafico descifrado\ndst=fd00:1::10
+
+note over PC3,PC1 #E3F2FD
+  PC3 accede a intranet.dominio.local
+  DNS dominio.local resuelve a fd00:1::10
+  HTTP nginx sirve pagina privada
+end note
+
+@enduml
