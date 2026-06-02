@@ -4,6 +4,205 @@
 
 ---
 
+## Glosario de Tecnologias
+
+### IPv6 — Estructura de una direccion
+
+Una direccion IPv6 tiene **128 bits** escritos como 8 grupos de 4 digitos hexadecimales separados por `:`.
+
+```
+2001:0db8:0012:0000:0000:0000:0000:0001
+```
+
+Reglas de abreviacion:
+- Los ceros iniciales de cada grupo se omiten: `0db8` → `db8`
+- Un bloque consecutivo de grupos todo-cero se reemplaza con `::` (solo una vez)
+
+```
+2001:db8:12::1   =   2001:0db8:0012:0000:0000:0000:0000:0001
+fd00:1::10       =   fd00:0001:0000:0000:0000:0000:0000:0010
+```
+
+El sufijo `/64` indica el prefijo de red (los primeros 64 bits son la red,
+los 64 restantes identifican al host dentro de esa red).
+
+### GUA — Global Unicast Address
+
+Equivalente a las IPs publicas de IPv4. Son enrutables en internet.
+Rango: `2000::/3` (empieza con `2` o `3`).
+
+```
+En este lab:
+  2001:db8:12::1   (R1-Linux, entrada publica)
+  2001:db8:3::10   (PC3, cliente externo)
+  2001:db8:23::1   (R2 Serial, enlace interno)
+```
+
+### ULA — Unique Local Address
+
+Equivalente a las IPs privadas de IPv4 (192.168.x.x, 10.x.x.x).
+No son enrutables en internet. Rango: `fc00::/7` (empieza con `fd`).
+
+```
+En este lab:
+  fd00:1::1    (R1-Linux, gateway LAN interna)
+  fd00:1::10   (PC1 servidor, solo red privada)
+  fd00:1::20   (PC2 VPCS, cliente interno)
+  fd00:2::1    (PC1 extremo VPN)
+  fd00:2::2    (PC3 extremo VPN)
+```
+
+### OSPFv3 — Protocolo de Ruteo Dinamico
+
+Open Shortest Path First version 3. Protocolo de ruteo de estado de enlace
+para IPv6. Cada router anuncia las subredes de sus interfaces conectadas
+y aprende las del resto de la red. Sustituye a la configuracion manual de
+rutas estaticas.
+
+- Todos los routers comparten el mismo **Area 0** (backbone)
+- Cada router tiene un **router-id** de 32 bits en formato IPv4 (ej: `1.1.1.1`)
+- Los routers intercambian **Hello packets** para descubrir vecinos
+- El estado se propaga hasta que todos tienen el mismo mapa de la red
+
+```
+En este lab r1-linux anuncia fd00:1::/64 ->
+R2 aprende que para llegar a PC1 debe ir a r1-linux ->
+R3 aprende que para llegar a PC1 debe ir a R2 -> r1-linux
+```
+
+### DNS — Domain Name System
+
+Traduce nombres de dominio a direcciones IPv6 (registros AAAA).
+En este lab BIND9 en PC1 sirve dos zonas:
+
+- `dominio.com` — zona publica, resuelve a `2001:db8:12::1` (R1-Linux)
+- `dominio.local` — zona privada, resuelve a `fd00:1::10` (PC1 ULA),
+  solo accesible desde la VPN
+
+### HTTP — HyperText Transfer Protocol
+
+Protocolo de transferencia web en puerto TCP:80. En este lab nginx
+en PC1 sirve dos sitios virtuales (vhosts):
+
+- `dominio.com` → pagina publica, accesible sin VPN via NAT66 DNAT
+- `intranet.dominio.local` → pagina privada, solo accesible con VPN activa
+
+### NAT66 — Network Address Translation para IPv6
+
+Reescribe la direccion IPv6 de destino de un paquete entrante (DNAT).
+Permite que PC1 tenga solo una IP privada (ULA) mientras R1-Linux
+recibe el trafico publico y lo redirige.
+
+```
+Sin NAT66: cliente necesita conocer la IP real de PC1
+Con NAT66: cliente habla con 2001:db8:12::1 (R1-Linux)
+           R1-Linux redirige internamente a fd00:1::10 (PC1)
+           PC1 nunca expone su IP real al exterior
+```
+
+### ACL — Access Control List
+
+Lista de reglas que filtra trafico por criterios (protocolo, puerto,
+interfaz, estado de conexion). En ip6tables se implementan como reglas
+en cadenas INPUT y FORWARD.
+
+- **INPUT**: trafico destinado al propio router (R1-Linux)
+- **FORWARD**: trafico que pasa por el router hacia otro destino
+- **ESTABLISHED/RELATED**: stateful — permite respuestas a sesiones ya abiertas
+- **DROP**: descarta el paquete sin notificar al emisor
+
+### WireGuard — VPN moderna
+
+Protocolo VPN moderno que usa criptografia de curva eliptica (Curve25519).
+Mas simple y eficiente que OpenVPN o IPsec. Funciona sobre UDP.
+En este lab PC3 establece el tunel hacia R1-Linux que hace DNAT
+al puerto 51820 de PC1. El tunel cifra todo el trafico entre PC3 y la
+red interna del lab.
+
+---
+
+## Comandos de Prueba — Referencia
+
+| Comando | Protocolo | Puerto | Que verifica | Resultado esperado |
+|---------|-----------|--------|--------------|-------------------|
+| `ping6 2001:db8:3::1` | ICMPv6 | — | Conectividad a gateway R3 | `0% packet loss` |
+| `ping6 2001:db8:23::1` | ICMPv6 | — | Alcance a R2 Serial via OSPFv3 | `0% packet loss` |
+| `ping6 2001:db8:12::2` | ICMPv6 | — | Alcance a R2 Ethernet via OSPFv3 | `0% packet loss` |
+| `ping6 2001:db8:12::1` | ICMPv6 | — | Alcance a R1-Linux (IP publica) | `0% packet loss` |
+| `ping6 fd00:2::1` | ICMPv6 | — | Extremo VPN PC1 (solo con tunel activo) | `0% packet loss` |
+| `ping6 fd00:1::10` | ICMPv6 | — | PC1 ULA via tunel WireGuard | `0% packet loss` |
+| `traceroute6 2001:db8:12::1` | ICMPv6 | — | Ruta PC3→R3→R2→R1 via OSPFv3 | 3 saltos visibles |
+| `curl -6 http://[2001:db8:12::1]/` | HTTP | TCP:80 | Web publica via NAT66 DNAT | HTML dominio.com |
+| `curl -6 http://[2001:db8:12::1]:8080/` | HTTP | TCP:8080 | ACL bloquea puertos no permitidos | timeout/conexion rechazada |
+| `curl -6 -H "Host: intranet.dominio.local" http://[fd00:1::10]/` | HTTP | TCP:80 | Intranet privada via VPN | HTML intranet |
+| `dig AAAA dominio.com @2001:db8:12::1` | DNS | UDP:53 | DNS via DNAT :53→PC1 | `2001:db8:12::1` |
+| `dig AAAA dominio.com @fd00:1::10` | DNS | UDP:53 | DNS directo a PC1 via VPN | `2001:db8:12::1` |
+| `dig AAAA dominio.local @fd00:1::10` | DNS | UDP:53 | Zona privada (solo VPN) | `fd00:1::10` |
+| `wg show` | WireGuard | UDP:51820 | Estado tunel VPN | `latest handshake: Xs ago` |
+| `wg-quick up wg0` | WireGuard | UDP:51820 | Levantar tunel hacia R1-Linux | — |
+| `wg-quick down wg0` | WireGuard | — | Bajar tunel (probar aislamiento) | — |
+
+> El traceroute muestra `*` en el salto 3 (R1-Linux) porque la ACL bloquea
+> ICMP TTL-exceeded entrante desde eth0. Esto es correcto — el trafico HTTP
+> y DNS si llega porque esos puertos estan permitidos.
+
+---
+
+## Verificacion de Requisitos del Enunciado
+
+### REQ: ping6 a la direccion publica de R2 desde PC3
+
+```bash
+# Desde pc3-cliente
+ping6 2001:db8:12::2    # R2 FastEthernet0/0
+ping6 2001:db8:23::1    # R2 Serial0/0
+```
+
+```
+PING 2001:db8:12::2 - 3 packets transmitted, 3 received, 0% packet loss
+PING 2001:db8:23::1 - 3 packets transmitted, 3 received, 0% packet loss
+```
+
+R2 es alcanzable desde PC3 gracias a OSPFv3: R3 anuncia su red local
+y aprende la red de R2, formando la ruta PC3→R3→R2.
+
+### REQ: traceroute6 a dominio.com para verificar paso por OSPFv3
+
+```bash
+# dominio.com resuelve a 2001:db8:12::1 (R1-Linux)
+traceroute6 -n 2001:db8:12::1
+```
+
+```
+ 1  2001:db8:3::1    (R3 fa0/0  — gateway local de PC3)
+ 2  2001:db8:23::1   (R2 s0/0   — enlace serial R2-R3, aprendido via OSPF)
+ 3  *                (R1-Linux  — bloquea ICMP desde eth0 por ACL, correcto)
+```
+
+El paso por R3 y R2 demuestra que OSPFv3 propago las rutas correctamente.
+R1-Linux no responde ICMPv6 de diagnostico desde su interfaz publica
+(ACL diseñada asi), pero si responde HTTP, DNS y WireGuard.
+
+### REQ: Trafico web/dns/vpn llega al servidor via NAT y ACL
+
+```bash
+# Web via NAT66 DNAT :80
+curl -6 http://[2001:db8:12::1]/
+# -> "dominio.com" servido por nginx en PC1 (fd00:1::10)
+
+# DNS via NAT66 DNAT :53
+dig AAAA dominio.com @2001:db8:12::1
+# -> 2001:db8:12::1 (resuelto por BIND9 en PC1)
+
+# VPN via NAT66 DNAT :51820
+wg show  # endpoint: [2001:db8:12::1]:51820, latest handshake: Xs ago
+```
+
+Los tres servicios llegan a PC1 gracias a las reglas DNAT en R1-Linux.
+La ACL permite exactamente esos tres puertos y bloquea todo lo demas.
+
+---
+
 ## Topologia
 
 ![Topologia del laboratorio](image.png)
