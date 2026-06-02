@@ -1,0 +1,20 @@
+; ============================================================
+; dominio.local — zona privada
+; Solo accesible desde LAN interna o clientes VPN
+; ============================================================
+$TTL 86400
+@   IN  SOA  ns1.dominio.local. admin.dominio.local. (
+        2024010102
+        3600
+        900
+        604800
+        86400 )
+
+@           IN  NS   ns1.dominio.local.
+ns1         IN  AAAA fd00:1::10
+
+; Recursos privados
+@           IN  AAAA fd00:1::10
+intranet    IN  AAAA fd00:1::10
+servidor    IN  AAAA fd00:1::10
+pc2         IN  AAAA fd00:1::20

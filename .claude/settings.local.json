@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /home/re/Downloads/lab-ipv6-v2-ios124/lab-ipv6-v2/docker/r1-linux/configs/frr \\\\ *)",
+      "Bash(chmod +x /home/re/Downloads/lab-ipv6-v2-ios124/lab-ipv6-v2/docker/r1-linux/scripts/start.sh /home/re/Downloads/lab-ipv6-v2-ios124/lab-ipv6-v2/tests/guia-pruebas.sh /home/re/Downloads/lab-ipv6-v2-ios124/lab-ipv6-v2/generar-claves-y-rebuild.sh)",
+      "Bash(./generar-claves-y-rebuild.sh)",
+      "Bash(docker stop *)",
+      "Bash(docker rm *)",
+      "Bash(xargs -r docker rm -f)",
+      "Bash(docker exec *)"
+    ],
+    "additionalDirectories": [
+      "/home/re/Downloads/lab-ipv6-v2-ios124/lab-ipv6-v2/docker/r1-linux/configs"
+    ]
+  }
+}

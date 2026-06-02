@@ -1,0 +1,39 @@
+! R2 - Cisco 3745 IOS 12.4(25d)
+! GNS3: nodo etiquetado "R1" — no confundir con r1-linux
+! Conexiones: fa0/0 -> r1-linux eth0 | s0/0 -> R3 s0/0 (DCE)
+enable
+configure terminal
+hostname R2
+ipv6 unicast-routing
+ipv6 cef
+interface FastEthernet0/0
+ description Enlace hacia r1-linux eth0
+ no ip address
+ ipv6 address 2001:db8:12::2/64
+ ipv6 enable
+ ipv6 ospf 1 area 0
+ no shutdown
+interface Serial0/0
+ description Enlace hacia R3 s0/0 (DCE)
+ no ip address
+ ipv6 address 2001:db8:23::1/64
+ ipv6 enable
+ ipv6 ospf 1 area 0
+ clock rate 64000
+ no shutdown
+interface FastEthernet0/1
+ shutdown
+interface Serial0/1
+ shutdown
+interface Serial0/2
+ shutdown
+ipv6 router ospf 1
+ router-id 2.2.2.2
+ log-adjacency-changes
+end
+write memory
+show ipv6 interface brief
+show ipv6 ospf neighbor
+show ipv6 route ospf
+ping ipv6 2001:db8:12::1
+ping ipv6 2001:db8:23::2

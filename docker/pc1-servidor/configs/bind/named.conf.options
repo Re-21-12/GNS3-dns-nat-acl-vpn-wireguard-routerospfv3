@@ -1,0 +1,26 @@
+options {
+    directory "/var/cache/bind";
+
+    listen-on-v6 { any; };
+    listen-on    { 127.0.0.1; };
+
+    // Consultas desde LAN interna, VPN y red publica
+    allow-query { any; };
+
+    // Reenviar consultas externas a Google IPv6
+    forwarders {
+        2001:4860:4860::8888;
+        2001:4860:4860::8844;
+    };
+    forward only;
+
+    dnssec-validation no;
+    recursion yes;
+
+    // Permitir recursion desde LAN interna, VPN, y R1-Linux (fd00:1::1)
+    // Nota: trafico de PC3 via DNAT llega como fd00:1::1 (MASQUERADE de R1)
+    allow-recursion {
+        ::1;
+        fd00::/16;
+    };
+};

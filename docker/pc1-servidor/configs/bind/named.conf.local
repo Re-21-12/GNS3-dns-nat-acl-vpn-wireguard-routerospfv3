@@ -1,0 +1,9 @@
+zone "dominio.com" {
+    type master;
+    file "/etc/bind/zones/db.dominio.com";
+};
+
+zone "dominio.local" {
+    type master;
+    file "/etc/bind/zones/db.dominio.local";
+};
