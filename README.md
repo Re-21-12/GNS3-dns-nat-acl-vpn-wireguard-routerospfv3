@@ -403,6 +403,185 @@ R3# show ipv6 ospf neighbor
 
 ---
 
+## Configuracion de r1-linux — Como funciona como router
+
+r1-linux es un contenedor Docker Ubuntu 22.04 que reemplaza al Cisco IOS
+porque IOS 12.4 no soporta NAT66. Al arrancar en GNS3 ejecuta
+`/scripts/start.sh` que aplica toda la configuracion automaticamente.
+
+### Dockerfile — Que se instala
+
+```dockerfile
+FROM ubuntu:22.04
+
+RUN apt-get install -y \
+    frr        # FRRouting: daemon OSPFv3 (zebra + ospf6d)
+    iptables   # incluye ip6tables para NAT66 y ACL
+    iproute2   # comandos ip, ip6tables
+    kmod       # modprobe para cargar modulos del kernel
+    ...
+```
+
+### Paso 0 — Esperar interfaces de GNS3
+
+GNS3 arranca el contenedor y **luego** conecta las interfaces virtuales
+(eth0, eth1) al canvas. Sin este wait loop, start.sh correria antes
+de que las interfaces existan y ninguna IP ni regla se aplicaria.
+
+```bash
+for i in $(seq 1 30); do
+    if ip link show eth0 && ip link show eth1; then break; fi
+    sleep 1
+done
+```
+
+### Paso 1 — IPv6 forwarding
+
+Sin esto el kernel descarta los paquetes que llegan a una interfaz
+y deben salir por otra. Es el primer requisito para que r1-linux
+actue como router.
+
+```bash
+sysctl -w net.ipv6.conf.all.forwarding=1
+sysctl -w net.ipv6.conf.default.forwarding=1
+sysctl -w net.ipv6.conf.all.accept_ra=0  # no aceptar RA de otros routers
+```
+
+### Paso 2 — Asignar IPs a las interfaces
+
+```bash
+ip -6 addr add 2001:db8:12::1/64 dev eth0  # publica, hacia R2
+ip -6 addr add fd00:1::1/64      dev eth1  # privada, hacia Switch1/PC1
+```
+
+### Paso 3 — ip6tables: NAT66 DNAT + ACL
+
+**Cargar modulos del kernel** (necesarios para NAT66 en IPv6):
+
+```bash
+modprobe ip6table_nat
+modprobe ip6table_filter
+modprobe nf_conntrack
+```
+
+**DNAT — redireccion de puertos** (tabla nat, cadena PREROUTING):
+
+```bash
+# Todo lo que llega a eth0:80  va a PC1:80  (nginx)
+ip6tables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 \
+    -j DNAT --to-destination [fd00:1::10]:80
+
+# Todo lo que llega a eth0:53  va a PC1:53  (BIND9, TCP y UDP)
+ip6tables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 \
+    -j DNAT --to-destination [fd00:1::10]:53
+ip6tables -t nat -A PREROUTING -i eth0 -p udp --dport 53 \
+    -j DNAT --to-destination [fd00:1::10]:53
+
+# Todo lo que llega a eth0:51820 va a PC1:51820 (WireGuard)
+ip6tables -t nat -A PREROUTING -i eth0 -p udp --dport 51820 \
+    -j DNAT --to-destination [fd00:1::10]:51820
+
+# MASQUERADE: PC1 ve el trafico como origen fd00:1::1 (r1-linux)
+# Necesario porque PC1 no tiene ruta hacia 2001:db8:3::10 (PC3)
+ip6tables -t nat -A POSTROUTING -o eth1 -j MASQUERADE
+```
+
+**ACL — filtro en eth0** (tabla filter, cadena INPUT):
+
+```bash
+# OSPFv3: DEBE ir antes del DROP para que adjacencia con R2 funcione
+# Sin esta regla r1-linux no recibe Hello de R2 y OSPF no forma
+ip6tables -A INPUT -i eth0 -p ospf -j ACCEPT
+
+# Respuestas a sesiones ya establecidas (stateful)
+ip6tables -A INPUT -i eth0 -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# ICMPv6: NDP obligatorio (Neighbor Discovery), echo-reply para pings
+ip6tables -A INPUT -i eth0 -p ipv6-icmp -j ACCEPT
+
+# LAN interna y loopback: sin restricciones
+ip6tables -A INPUT -i eth1 -j ACCEPT
+ip6tables -A INPUT -i lo   -j ACCEPT
+
+# DENEGAR todo lo demas desde internet (SSH, telnet, etc.)
+ip6tables -A INPUT -i eth0 -j DROP
+```
+
+**FORWARD — trafico que pasa por r1-linux hacia PC1**:
+
+```bash
+# eth0->eth1: permite trafico nuevo (DNAT ya cambio el destino a PC1)
+ip6tables -A FORWARD -i eth0 -o eth1 \
+    -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+
+# eth1->eth0: solo respuestas de PC1 hacia internet
+ip6tables -A FORWARD -i eth1 -o eth0 \
+    -m state --state ESTABLISHED,RELATED -j ACCEPT
+```
+
+> **Por que el DROP no bloquea el DNAT:**
+> Los paquetes TCP:80/53 y UDP:53/51820 pasan por PREROUTING (donde se
+> aplica el DNAT y cambia su destino a PC1) ANTES de llegar a INPUT.
+> Despues del DNAT van a la cadena FORWARD, nunca ven el DROP de INPUT.
+
+### Paso 4 — FRRouting OSPFv3
+
+Se arrancan dos daemons de FRRouting en background:
+
+```bash
+/usr/lib/frr/zebra -d -f /etc/frr/frr.conf -u frr -g frr \
+    --log file:/var/log/frr/zebra.log -i /var/run/frr/zebra.pid
+
+/usr/lib/frr/ospf6d -d -f /etc/frr/frr.conf -u frr -g frr \
+    --log file:/var/log/frr/ospf6d.log -i /var/run/frr/ospf6d.pid
+```
+
+- **zebra**: gestiona la tabla de rutas del kernel, recibe anuncios de ospf6d
+- **ospf6d**: protocolo OSPFv3, forma adjacencias con R2 y propaga rutas
+
+### frr.conf — Configuracion OSPFv3
+
+```
+frr version 8.1
+hostname R1-Linux
+ipv6 forwarding
+
+interface eth0
+ description Red publica hacia R2 fa0/0
+
+interface eth1
+ description LAN interna hacia Switch1
+
+router ospf6
+ ospf6 router-id 1.1.1.1
+ interface eth0 area 0.0.0.0   <- anuncia y escucha OSPF en red publica
+ interface eth1 area 0.0.0.0   <- anuncia fd00:1::/64 (red de PC1)
+```
+
+Con esta config r1-linux:
+
+- Anuncia `fd00:1::/64` al area OSPF para que R2 y R3 sepan llegar a PC1
+- Aprende `2001:db8:3::/64` de R3 via R2 para saber enviar respuestas a PC3
+
+### Verificacion en tiempo real
+
+```bash
+# Desde el host GNS3:
+docker exec $(docker ps --filter name=GNS3.r1-linux -q) \
+    vtysh -c "show ipv6 ospf6 neighbor"
+# Esperado: 2.2.2.2  Full/DR  eth0
+
+docker exec $(docker ps --filter name=GNS3.r1-linux -q) \
+    vtysh -c "show ipv6 route"
+# Esperado: O>* 2001:db8:3::/64 via fe80::... eth0
+
+docker exec $(docker ps --filter name=GNS3.r1-linux -q) \
+    ip6tables -t nat -L PREROUTING -n -v
+# Esperado: 4 reglas DNAT para :80 :53 :53 :51820
+```
+
+---
+
 ## NAT66 DNAT — Redireccion de puertos
 
 r1-linux actua como punto de entrada publico. Todo el trafico que llega
