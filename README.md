@@ -236,6 +236,136 @@ red interna del lab.
 
 ---
 
+## Como funcionan ping, ping6 y traceroute
+
+### ping y ping6 — Protocolo ICMPv6 / ICMP
+
+`ping` usa el protocolo **ICMP** (Internet Control Message Protocol).
+`ping6` usa **ICMPv6**, la version para IPv6 (definido en RFC 4443).
+
+No usan TCP ni UDP — son mensajes de control embebidos directamente
+en la capa de red (IPv4 o IPv6), sin numero de puerto.
+
+```
+IPv6 Header
+  Next Header = 58 (ICMPv6)
+  [Type=128 Echo Request]  <- lo que envia ping6
+  [Type=129 Echo Reply]    <- lo que responde el destino
+```
+
+Cuando ejecutas `ping6 2001:db8:12::1`:
+
+1. PC3 envia un **Echo Request** (tipo 128) al destino
+2. R1-Linux recibe el paquete ICMPv6
+3. La ACL tiene `ip6tables -A INPUT -i eth0 -p ipv6-icmp -j ACCEPT`
+4. R1-Linux responde con un **Echo Reply** (tipo 129)
+5. PC3 mide el tiempo de ida y vuelta (RTT)
+
+Si la ACL tuviese `-j DROP` para ICMPv6, el ping no responderia
+aunque la ruta existiera. Por eso ping confirma que:
+
+- La ruta IP existe (OSPFv3 convergido)
+- La ACL permite ICMPv6
+- El host destino esta activo
+
+### traceroute6 — Como funciona con TTL
+
+`traceroute6` usa el campo **Hop Limit** de IPv6 (equivalente al TTL
+de IPv4) para descubrir los routers intermedios en la ruta.
+
+**TTL (Time To Live) / Hop Limit:**
+Cada paquete IPv6 tiene un campo Hop Limit (8 bits, valor 0-255).
+Cada router que reenvía el paquete **decrementa ese valor en 1**.
+Si llega a 0, el router **descarta el paquete** y devuelve un
+mensaje ICMPv6 tipo 3 (Time Exceeded) al origen.
+
+**Algoritmo de traceroute:**
+
+```
+Iteracion 1: envia paquete con Hop Limit = 1
+  -> R3 lo recibe, decrementa a 0, descarta
+  -> R3 envia ICMPv6 "Time Exceeded" a PC3
+  -> PC3 sabe que el primer salto es R3
+
+Iteracion 2: envia paquete con Hop Limit = 2
+  -> R3 decrementa a 1, reenvía a R2
+  -> R2 decrementa a 0, descarta
+  -> R2 envia ICMPv6 "Time Exceeded" a PC3
+  -> PC3 sabe que el segundo salto es R2
+
+Iteracion 3: envia paquete con Hop Limit = 3
+  -> R3 decrementa, R2 decrementa, R1-Linux recibe con HL=1
+  -> R1-Linux lo descarta o lo entrega
+  -> La ACL de R1-Linux bloquea ICMPv6 Time Exceeded saliente
+  -> PC3 ve * (sin respuesta)
+```
+
+```
+PC3 → traceroute6 2001:db8:12::1
+
+Salto 1:  2001:db8:3::1   ← R3 respondio con Time Exceeded
+Salto 2:  2001:db8:23::1  ← R2 respondio con Time Exceeded
+Salto 3:  *               ← R1-Linux no responde (ACL bloquea)
+```
+
+R1-Linux no responde en el salto 3 porque la ACL solo permite
+ICMPv6 de tipo **echo-reply** (respuestas a ping), no Time Exceeded.
+El `*` no significa que no llegue — el HTTP y DNS si funcionan.
+
+### Por que traceroute no funciona dentro del tunel WireGuard
+
+Cuando PC3 hace `traceroute6 fd00:1::10` con VPN activa, todos los
+saltos muestran `*`. Esto NO es un error — es el comportamiento
+correcto y esperado de WireGuard.
+
+**La razon tecnica:**
+
+WireGuard opera en **kernel space** como interfaz punto a punto.
+Cuando PC3 envia un paquete con Hop Limit=1 hacia `fd00:1::10`:
+
+```
+Paquete interno (lo que ve traceroute):
+  src=fd00:2::2  dst=fd00:1::10  HopLimit=1
+
+WireGuard en PC3 cifra el paquete completo y lo mete en UDP:
+  Paquete externo (lo que ven los routers):
+  src=2001:db8:3::10  dst=2001:db8:12::1  UDP:51820  HopLimit=64
+  [datos cifrados que contienen el paquete interno]
+```
+
+Los routers R3, R2 y R1-Linux solo ven el **paquete externo UDP**
+con HopLimit=64. Nunca ven el HopLimit=1 del paquete interno.
+Por lo tanto **nunca generan ICMPv6 Time Exceeded** para el paquete
+interno. El tunel es invisible para traceroute.
+
+```
+Ruta PUBLICA — traceroute funciona:
+PC3 ─────────────────────────────────────────► R1-Linux
+      R3 ve paquete real    R2 ve paquete real
+      HopLimit decrementado → ICMP Time Exceeded enviado
+
+Ruta VPN — traceroute no funciona:
+PC3 ═══════════════════════════════════════════► PC1
+      R3 ve UDP cifrado     R2 ve UDP cifrado
+      HopLimit interno oculto → nunca generan ICMP
+```
+
+**La prueba correcta con VPN activa es `ping6`:**
+
+```bash
+ping6 fd00:1::10   # 0% perdida = tunel funcionando
+```
+
+El `*` en traceroute con VPN NO significa que el tunel este roto.
+El ping con `0% de perdida` es la verificacion correcta.
+
+**No existe solucion practica:**
+Se podria agregar una regla ip6tables artificial en r1-linux para
+generar ICMP Time Exceeded, pero mostraria una ruta falsa que no
+representa los saltos reales dentro del tunel.
+
+---
+
 ## Comandos de Prueba — Referencia
 
 | Comando                                                          | Protocolo | Puerto    | Que verifica                            | Resultado esperado         |
