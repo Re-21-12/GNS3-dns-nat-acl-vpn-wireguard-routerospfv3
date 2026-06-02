@@ -1,6 +1,8 @@
 # Lab IPv6 — Ruteo Dinamico, NAT66, ACL y VPN WireGuard
 
-## Todo IPv6 · OSPFv3 · NAT66 DNAT · ip6tables · WireGuard · GNS3
+<a href="https://youtu.be/Ts1ylG4d4fo" target="_blank">
+  <img src="https://img.youtube.com/vi/Ts1ylG4d4fo/hqdefault.jpg" alt="Video del laboratorio IPv6" width="480" />
+</a>
 
 ---
 
@@ -127,6 +129,7 @@ Una direccion IPv6 tiene **128 bits** escritos como 8 grupos de 4 digitos hexade
 ```
 
 Reglas de abreviacion:
+
 - Los ceros iniciales de cada grupo se omiten: `0db8` → `db8`
 - Un bloque consecutivo de grupos todo-cero se reemplaza con `::` (solo una vez)
 
@@ -235,24 +238,24 @@ red interna del lab.
 
 ## Comandos de Prueba — Referencia
 
-| Comando | Protocolo | Puerto | Que verifica | Resultado esperado |
-|---------|-----------|--------|--------------|-------------------|
-| `ping6 2001:db8:3::1` | ICMPv6 | — | Conectividad a gateway R3 | `0% packet loss` |
-| `ping6 2001:db8:23::1` | ICMPv6 | — | Alcance a R2 Serial via OSPFv3 | `0% packet loss` |
-| `ping6 2001:db8:12::2` | ICMPv6 | — | Alcance a R2 Ethernet via OSPFv3 | `0% packet loss` |
-| `ping6 2001:db8:12::1` | ICMPv6 | — | Alcance a R1-Linux (IP publica) | `0% packet loss` |
-| `ping6 fd00:2::1` | ICMPv6 | — | Extremo VPN PC1 (solo con tunel activo) | `0% packet loss` |
-| `ping6 fd00:1::10` | ICMPv6 | — | PC1 ULA via tunel WireGuard | `0% packet loss` |
-| `traceroute6 2001:db8:12::1` | ICMPv6 | — | Ruta PC3→R3→R2→R1 via OSPFv3 | 3 saltos visibles |
-| `curl -6 http://[2001:db8:12::1]/` | HTTP | TCP:80 | Web publica via NAT66 DNAT | HTML dominio.com |
-| `curl -6 http://[2001:db8:12::1]:8080/` | HTTP | TCP:8080 | ACL bloquea puertos no permitidos | timeout/conexion rechazada |
-| `curl -6 -H "Host: intranet.dominio.local" http://[fd00:1::10]/` | HTTP | TCP:80 | Intranet privada via VPN | HTML intranet |
-| `dig AAAA dominio.com @2001:db8:12::1` | DNS | UDP:53 | DNS via DNAT :53→PC1 | `2001:db8:12::1` |
-| `dig AAAA dominio.com @fd00:1::10` | DNS | UDP:53 | DNS directo a PC1 via VPN | `2001:db8:12::1` |
-| `dig AAAA dominio.local @fd00:1::10` | DNS | UDP:53 | Zona privada (solo VPN) | `fd00:1::10` |
-| `wg show` | WireGuard | UDP:51820 | Estado tunel VPN | `latest handshake: Xs ago` |
-| `wg-quick up wg0` | WireGuard | UDP:51820 | Levantar tunel hacia R1-Linux | — |
-| `wg-quick down wg0` | WireGuard | — | Bajar tunel (probar aislamiento) | — |
+| Comando                                                          | Protocolo | Puerto    | Que verifica                            | Resultado esperado         |
+| ---------------------------------------------------------------- | --------- | --------- | --------------------------------------- | -------------------------- |
+| `ping6 2001:db8:3::1`                                            | ICMPv6    | —         | Conectividad a gateway R3               | `0% packet loss`           |
+| `ping6 2001:db8:23::1`                                           | ICMPv6    | —         | Alcance a R2 Serial via OSPFv3          | `0% packet loss`           |
+| `ping6 2001:db8:12::2`                                           | ICMPv6    | —         | Alcance a R2 Ethernet via OSPFv3        | `0% packet loss`           |
+| `ping6 2001:db8:12::1`                                           | ICMPv6    | —         | Alcance a R1-Linux (IP publica)         | `0% packet loss`           |
+| `ping6 fd00:2::1`                                                | ICMPv6    | —         | Extremo VPN PC1 (solo con tunel activo) | `0% packet loss`           |
+| `ping6 fd00:1::10`                                               | ICMPv6    | —         | PC1 ULA via tunel WireGuard             | `0% packet loss`           |
+| `traceroute6 2001:db8:12::1`                                     | ICMPv6    | —         | Ruta PC3→R3→R2→R1 via OSPFv3            | 3 saltos visibles          |
+| `curl -6 http://[2001:db8:12::1]/`                               | HTTP      | TCP:80    | Web publica via NAT66 DNAT              | HTML dominio.com           |
+| `curl -6 http://[2001:db8:12::1]:8080/`                          | HTTP      | TCP:8080  | ACL bloquea puertos no permitidos       | timeout/conexion rechazada |
+| `curl -6 -H "Host: intranet.dominio.local" http://[fd00:1::10]/` | HTTP      | TCP:80    | Intranet privada via VPN                | HTML intranet              |
+| `dig AAAA dominio.com @2001:db8:12::1`                           | DNS       | UDP:53    | DNS via DNAT :53→PC1                    | `2001:db8:12::1`           |
+| `dig AAAA dominio.com @fd00:1::10`                               | DNS       | UDP:53    | DNS directo a PC1 via VPN               | `2001:db8:12::1`           |
+| `dig AAAA dominio.local @fd00:1::10`                             | DNS       | UDP:53    | Zona privada (solo VPN)                 | `fd00:1::10`               |
+| `wg show`                                                        | WireGuard | UDP:51820 | Estado tunel VPN                        | `latest handshake: Xs ago` |
+| `wg-quick up wg0`                                                | WireGuard | UDP:51820 | Levantar tunel hacia R1-Linux           | —                          |
+| `wg-quick down wg0`                                              | WireGuard | —         | Bajar tunel (probar aislamiento)        | —                          |
 
 > El traceroute muestra `*` en el salto 3 (R1-Linux) porque la ACL bloquea
 > ICMP TTL-exceeded entrante desde eth0. Esto es correcto — el trafico HTTP
@@ -341,15 +344,15 @@ La ACL permite exactamente esos tres puertos y bloquea todo lo demas.
 
 ### Cableado fisico confirmado en GNS3
 
-| Cable | Desde | Hacia | Tipo |
-|-------|-------|-------|------|
-| 1 | r1-linux eth0 | R2 FastEthernet0/0 | Ethernet |
-| 2 | r1-linux eth1 | Switch1 Ethernet0 | Ethernet |
-| 3 | R2 Serial0/0 (DCE) | R3 Serial0/0 (DTE) | Serial |
-| 4 | R3 FastEthernet0/0 | Switch2 Ethernet0 | Ethernet |
-| 5 | PC2 VPCS eth0 | Switch1 Ethernet1 | Ethernet |
-| 6 | pc1-servidor eth0 | Switch1 Ethernet2 | Ethernet |
-| 7 | pc3-cliente eth0 | Switch2 Ethernet1 | Ethernet |
+| Cable | Desde              | Hacia              | Tipo     |
+| ----- | ------------------ | ------------------ | -------- |
+| 1     | r1-linux eth0      | R2 FastEthernet0/0 | Ethernet |
+| 2     | r1-linux eth1      | Switch1 Ethernet0  | Ethernet |
+| 3     | R2 Serial0/0 (DCE) | R3 Serial0/0 (DTE) | Serial   |
+| 4     | R3 FastEthernet0/0 | Switch2 Ethernet0  | Ethernet |
+| 5     | PC2 VPCS eth0      | Switch1 Ethernet1  | Ethernet |
+| 6     | pc1-servidor eth0  | Switch1 Ethernet2  | Ethernet |
+| 7     | pc3-cliente eth0   | Switch2 Ethernet1  | Ethernet |
 
 > **Nota GNS3:** El nodo etiquetado "R1" en GNS3 es nuestro R2 (router-id 2.2.2.2).
 > El nodo etiquetado "R2" en GNS3 es nuestro R3 (router-id 3.3.3.3).
@@ -358,20 +361,20 @@ La ACL permite exactamente esos tres puertos y bloquea todo lo demas.
 
 ## Direccionamiento IPv6
 
-| Dispositivo | Interfaz | Direccion IPv6 | Tipo | Rol |
-|-------------|----------|----------------|------|-----|
-| r1-linux | eth0 | `2001:db8:12::1/64` | GUA publica | Entrada NAT66 |
-| r1-linux | eth1 | `fd00:1::1/64` | ULA privada | Gateway LAN |
-| r1-linux | — | router-id `1.1.1.1` | OSPFv3 | — |
-| R2 | fa0/0 | `2001:db8:12::2/64` | GUA publica | Enlace a r1-linux |
-| R2 | s0/0 | `2001:db8:23::1/64` | GUA publica | Enlace serial a R3 |
-| R3 | s0/0 | `2001:db8:23::2/64` | GUA publica | Enlace serial a R2 |
-| R3 | fa0/0 | `2001:db8:3::1/64` | GUA publica | Gateway PC3 |
-| pc1-servidor | eth0 | `fd00:1::10/64` | ULA privada | Solo LAN interna |
-| pc1-servidor | wg0 | `fd00:2::1/64` | ULA VPN | Extremo VPN servidor |
-| PC2 VPCS | eth0 | `fd00:1::20/64` | ULA privada | Cliente interno |
-| pc3-cliente | eth0 | `2001:db8:3::10/64` | GUA publica | Cliente externo |
-| pc3-cliente | wg0 | `fd00:2::2/64` | ULA VPN | Extremo VPN cliente |
+| Dispositivo  | Interfaz | Direccion IPv6      | Tipo        | Rol                  |
+| ------------ | -------- | ------------------- | ----------- | -------------------- |
+| r1-linux     | eth0     | `2001:db8:12::1/64` | GUA publica | Entrada NAT66        |
+| r1-linux     | eth1     | `fd00:1::1/64`      | ULA privada | Gateway LAN          |
+| r1-linux     | —        | router-id `1.1.1.1` | OSPFv3      | —                    |
+| R2           | fa0/0    | `2001:db8:12::2/64` | GUA publica | Enlace a r1-linux    |
+| R2           | s0/0     | `2001:db8:23::1/64` | GUA publica | Enlace serial a R3   |
+| R3           | s0/0     | `2001:db8:23::2/64` | GUA publica | Enlace serial a R2   |
+| R3           | fa0/0    | `2001:db8:3::1/64`  | GUA publica | Gateway PC3          |
+| pc1-servidor | eth0     | `fd00:1::10/64`     | ULA privada | Solo LAN interna     |
+| pc1-servidor | wg0      | `fd00:2::1/64`      | ULA VPN     | Extremo VPN servidor |
+| PC2 VPCS     | eth0     | `fd00:1::20/64`     | ULA privada | Cliente interno      |
+| pc3-cliente  | eth0     | `2001:db8:3::10/64` | GUA publica | Cliente externo      |
+| pc3-cliente  | wg0      | `fd00:2::2/64`      | ULA VPN     | Extremo VPN cliente  |
 
 ---
 
@@ -381,11 +384,11 @@ Todos los routers participan en OSPFv3 area 0. Cada uno anuncia sus
 subredes directamente conectadas para que el resto de la red conozca
 como llegar a los contenedores Docker.
 
-| Router | Anuncia via OSPF | Aprende via OSPF |
-|--------|-----------------|-----------------|
-| r1-linux | `fd00:1::/64`, `2001:db8:12::/64` | `2001:db8:3::/64`, `2001:db8:23::/64` |
-| R2 | `2001:db8:12::/64`, `2001:db8:23::/64` | `fd00:1::/64`, `2001:db8:3::/64` |
-| R3 | `2001:db8:3::/64`, `2001:db8:23::/64` | `fd00:1::/64`, `2001:db8:12::/64` |
+| Router   | Anuncia via OSPF                       | Aprende via OSPF                      |
+| -------- | -------------------------------------- | ------------------------------------- |
+| r1-linux | `fd00:1::/64`, `2001:db8:12::/64`      | `2001:db8:3::/64`, `2001:db8:23::/64` |
+| R2       | `2001:db8:12::/64`, `2001:db8:23::/64` | `fd00:1::/64`, `2001:db8:3::/64`      |
+| R3       | `2001:db8:3::/64`, `2001:db8:23::/64`  | `fd00:1::/64`, `2001:db8:12::/64`     |
 
 ### Estado verificado
 
@@ -486,13 +489,13 @@ luego el paquete va a FORWARD (no INPUT) y el DROP de INPUT nunca lo ve.
 
 ## Servicios en PC1 (pc1-servidor)
 
-| Servicio | Puerto | Tecnologia | Acceso |
-|----------|--------|------------|--------|
-| HTTP dominio.com | TCP:80 | nginx | Publico via DNAT |
-| HTTP intranet.dominio.local | TCP:80 | nginx (vhost) | Solo via VPN |
-| DNS dominio.com | UDP/TCP:53 | BIND9 | Publico via DNAT |
-| DNS dominio.local | UDP/TCP:53 | BIND9 | Solo via VPN |
-| VPN servidor | UDP:51820 | WireGuard | Publico via DNAT |
+| Servicio                    | Puerto     | Tecnologia    | Acceso           |
+| --------------------------- | ---------- | ------------- | ---------------- |
+| HTTP dominio.com            | TCP:80     | nginx         | Publico via DNAT |
+| HTTP intranet.dominio.local | TCP:80     | nginx (vhost) | Solo via VPN     |
+| DNS dominio.com             | UDP/TCP:53 | BIND9         | Publico via DNAT |
+| DNS dominio.local           | UDP/TCP:53 | BIND9         | Solo via VPN     |
+| VPN servidor                | UDP:51820  | WireGuard     | Publico via DNAT |
 
 ### Zonas DNS
 
@@ -516,13 +519,13 @@ PC3 puede acceder fd00:1::/64 (LAN interna)
 PC3 puede acceder fd00:2::/64 (red VPN)
 ```
 
-| Parametro | Valor |
-|-----------|-------|
-| Endpoint (desde PC3) | `[2001:db8:12::1]:51820` |
-| AllowedIPs (PC3) | `fd00:1::/64, fd00:2::/64` |
-| IP servidor (PC1 wg0) | `fd00:2::1/64` |
-| IP cliente (PC3 wg0) | `fd00:2::2/64` |
-| PersistentKeepalive | 25 segundos |
+| Parametro             | Valor                      |
+| --------------------- | -------------------------- |
+| Endpoint (desde PC3)  | `[2001:db8:12::1]:51820`   |
+| AllowedIPs (PC3)      | `fd00:1::/64, fd00:2::/64` |
+| IP servidor (PC1 wg0) | `fd00:2::1/64`             |
+| IP cliente (PC3 wg0)  | `fd00:2::2/64`             |
+| PersistentKeepalive   | 25 segundos                |
 
 ---
 
@@ -530,20 +533,20 @@ PC3 puede acceder fd00:2::/64 (red VPN)
 
 Todas las pruebas ejecutadas desde `pc3-cliente` (cliente externo).
 
-| Prueba | Comando | Resultado |
-|--------|---------|-----------|
-| ping6 a R2 Serial | `ping6 2001:db8:23::1` | 0% perdida |
-| ping6 a R2 Ethernet | `ping6 2001:db8:12::2` | 0% perdida |
-| traceroute6 dominio.com | salto1=R3, salto2=R2, salto3=R1 | 3 saltos OSPFv3 |
-| HTTP publico (NAT66) | `curl http://[2001:db8:12::1]/` | dominio.com OK |
-| ACL bloquea :8080 | `curl http://[...]:8080` | timeout OK |
-| DNS via DNAT | `dig @2001:db8:12::1 dominio.com` | `2001:db8:12::1` |
-| DNS dominio.local | `dig @fd00:1::10 dominio.local` | `fd00:1::10` |
-| WireGuard handshake | `wg show` | activo (<25s) |
-| Intranet via VPN | `curl -H Host:intranet.dominio.local` | pagina privada OK |
-| fd00:2::1 sin VPN | `ping6 fd00:2::1` | 100% perdida OK |
-| HTTP publico sin VPN | `curl http://[2001:db8:12::1]/` | sigue OK |
-| Reconexion VPN | `wg-quick up wg0` | handshake en ~3s |
+| Prueba                  | Comando                               | Resultado         |
+| ----------------------- | ------------------------------------- | ----------------- |
+| ping6 a R2 Serial       | `ping6 2001:db8:23::1`                | 0% perdida        |
+| ping6 a R2 Ethernet     | `ping6 2001:db8:12::2`                | 0% perdida        |
+| traceroute6 dominio.com | salto1=R3, salto2=R2, salto3=R1       | 3 saltos OSPFv3   |
+| HTTP publico (NAT66)    | `curl http://[2001:db8:12::1]/`       | dominio.com OK    |
+| ACL bloquea :8080       | `curl http://[...]:8080`              | timeout OK        |
+| DNS via DNAT            | `dig @2001:db8:12::1 dominio.com`     | `2001:db8:12::1`  |
+| DNS dominio.local       | `dig @fd00:1::10 dominio.local`       | `fd00:1::10`      |
+| WireGuard handshake     | `wg show`                             | activo (<25s)     |
+| Intranet via VPN        | `curl -H Host:intranet.dominio.local` | pagina privada OK |
+| fd00:2::1 sin VPN       | `ping6 fd00:2::1`                     | 100% perdida OK   |
+| HTTP publico sin VPN    | `curl http://[2001:db8:12::1]/`       | sigue OK          |
+| Reconexion VPN          | `wg-quick up wg0`                     | handshake en ~3s  |
 
 ---
 
